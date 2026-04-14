@@ -411,22 +411,62 @@ export default function SistemaControleNegocio() {
 
   async function persistProduct(product) {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.from("products").upsert(mapProductToDb(product));
+
+    const payload = mapProductToDb(product);
+    payload.id = Number(payload.id);
+    payload.quantity = Number(payload.quantity);
+    payload.cost_total = Number(payload.cost_total);
+    payload.wholesale = Number(payload.wholesale);
+    payload.retail = Number(payload.retail);
+
+    const { data, error } = await supabase
+      .from("products")
+      .upsert(payload)
+      .select("id")
+      .single();
+
     if (error) throw error;
+    if (!data) throw new Error("Não foi possível salvar o produto.");
+
     setLastSync(new Date().toLocaleString("pt-BR"));
   }
 
   async function persistSale(sale) {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.from("sales").upsert(mapSaleToDb(sale));
+
+    const payload = mapSaleToDb(sale);
+    payload.id = Number(payload.id);
+    payload.product_id = Number(payload.product_id);
+    payload.qty = Number(payload.qty);
+
+    const { data, error } = await supabase
+      .from("sales")
+      .upsert(payload)
+      .select("id")
+      .single();
+
     if (error) throw error;
+    if (!data) throw new Error("Não foi possível salvar a venda.");
+
     setLastSync(new Date().toLocaleString("pt-BR"));
   }
 
   async function removeProductFromDb(productId) {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.from("products").delete().eq("id", productId);
+
+    const normalizedProductId = Number(productId);
+
+    const { data, error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", normalizedProductId)
+      .select("id");
+
     if (error) throw error;
+    if (!data || data.length === 0) {
+      throw new Error("Produto não encontrado para exclusão.");
+    }
+
     setLastSync(new Date().toLocaleString("pt-BR"));
   }
 
@@ -442,7 +482,6 @@ export default function SistemaControleNegocio() {
       .select("id");
 
     if (error) throw error;
-
     if (!data || data.length === 0) {
       throw new Error("Venda não encontrada para exclusão.");
     }
@@ -519,14 +558,26 @@ export default function SistemaControleNegocio() {
     try {
       setSyncing(true);
       setDbError("");
+
+      const normalizedProductId = Number(productId);
+
       if (isSupabaseConfigured && supabase) {
-        await supabase.from("sales").delete().eq("product_id", productId);
-        await removeProductFromDb(productId);
+        const { error: salesDeleteError } = await supabase
+          .from("sales")
+          .delete()
+          .eq("product_id", normalizedProductId);
+
+        if (salesDeleteError) throw salesDeleteError;
+
+        await removeProductFromDb(normalizedProductId);
       }
-      setProducts((prev) => prev.filter((product) => product.id !== productId));
-      setSales((prev) => prev.filter((sale) => sale.productId !== productId));
-      if (editingProductId === productId) cancelEditProduct();
+
+      setProducts((prev) => prev.filter((product) => product.id !== normalizedProductId));
+      setSales((prev) => prev.filter((sale) => sale.productId !== normalizedProductId));
+
+      if (editingProductId === normalizedProductId) cancelEditProduct();
     } catch (error) {
+      console.error("Erro ao excluir produto:", error);
       setDbError(error.message || "Erro ao excluir produto.");
     } finally {
       setSyncing(false);
@@ -600,9 +651,7 @@ export default function SistemaControleNegocio() {
       await removeSaleFromDb(normalizedSaleId);
       setSales((prev) => prev.filter((sale) => sale.id !== normalizedSaleId));
 
-      if (editingSaleId === normalizedSaleId) {
-        cancelEditSale();
-      }
+      if (editingSaleId === normalizedSaleId) cancelEditSale();
     } catch (error) {
       console.error("Erro ao excluir venda:", error);
       setDbError(error.message || "Erro ao excluir venda.");
